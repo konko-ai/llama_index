@@ -149,6 +149,24 @@ maxdepth: 1
 /examples/llm/monsterapi.ipynb
 ```
 
+## Nvidia TensorRT
+
+```{toctree}
+---
+maxdepth: 1
+---
+/examples/llm/nvidia_tensorrt.ipynb
+```
+
+## Nivida Triton
+
+```{toctree}
+---
+maxdepth: 1
+---
+/examples/llm/nvidia_triton.ipynb
+```
+
 ## Ollama
 
 ```{toctree}
