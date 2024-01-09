@@ -61,7 +61,7 @@ class Konko(LLM):
         default=10, description="The maximum number of API retries.", gte=0
     )
 
-    api_key: str = Field(default=None, description="The konko API key.")
+    konko_api_key: str = Field(default=None, description="The konko API key.")
     openai_api_key: str = Field(default=None, description="The Openai API key.")
     api_type: str = Field(default=None, description="The konko API type.")
 
@@ -72,7 +72,7 @@ class Konko(LLM):
         max_tokens: Optional[int] = DEFAULT_NUM_OUTPUTS,
         additional_kwargs: Optional[Dict[str, Any]] = None,
         max_retries: int = 10,
-        api_key: Optional[str] = None,
+        konko_api_key: Optional[str] = None,
         openai_api_key: Optional[str] = None,
         api_type: Optional[str] = None,
         callback_manager: Optional[CallbackManager] = None,
@@ -91,7 +91,7 @@ class Konko(LLM):
             additional_kwargs=additional_kwargs,
             max_retries=max_retries,
             callback_manager=callback_manager,
-            api_key=api_key,
+            konko_api_key=konko_api_key,
             openai_api_key=openai_api_key,
             api_type=api_type,
             system_prompt=system_prompt,
@@ -143,7 +143,7 @@ class Konko(LLM):
     @property
     def _credential_kwargs(self) -> Dict[str, Any]:
         return {
-            "api_key": self.api_key,
+            "konko_api_key": self.konko_api_key,
             "api_type": self.api_type,
             "openai_api_key": self.openai_api_key,
         }
