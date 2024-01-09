@@ -19,8 +19,8 @@ from llama_index.llms.konko_utils import (
     completion_with_retry,
     from_openai_message_dict,
     is_chat_model,
+    is_openai_v1,
     konko_modelname_to_contextsize,
-    resolve_konko_credentials,
     to_openai_message_dicts,
 )
 from llama_index.llms.llm import LLM
@@ -36,7 +36,7 @@ from llama_index.llms.types import (
 )
 from llama_index.types import BaseOutputParser, PydanticProgramMode
 
-DEFAULT_KONKO_MODEL = "meta-llama/Llama-2-13b-chat-hf"
+DEFAULT_KONKO_MODEL = "meta-llama/llama-2-13b-chat"
 
 
 class Konko(LLM):
@@ -61,11 +61,9 @@ class Konko(LLM):
         default=10, description="The maximum number of API retries.", gte=0
     )
 
-    konko_api_key: str = Field(default=None, description="The konko API key.")
+    api_key: str = Field(default=None, description="The konko API key.")
     openai_api_key: str = Field(default=None, description="The Openai API key.")
     api_type: str = Field(default=None, description="The konko API type.")
-    api_base: str = Field(description="The base URL for konko API.")
-    api_version: str = Field(description="The API version for konko API.")
 
     def __init__(
         self,
@@ -74,11 +72,9 @@ class Konko(LLM):
         max_tokens: Optional[int] = DEFAULT_NUM_OUTPUTS,
         additional_kwargs: Optional[Dict[str, Any]] = None,
         max_retries: int = 10,
-        konko_api_key: Optional[str] = None,
+        api_key: Optional[str] = None,
         openai_api_key: Optional[str] = None,
         api_type: Optional[str] = None,
-        api_base: Optional[str] = None,
-        api_version: Optional[str] = None,
         callback_manager: Optional[CallbackManager] = None,
         system_prompt: Optional[str] = None,
         messages_to_prompt: Optional[Callable[[Sequence[ChatMessage]], str]] = None,
@@ -88,21 +84,6 @@ class Konko(LLM):
         **kwargs: Any,
     ) -> None:
         additional_kwargs = additional_kwargs or {}
-
-        (
-            konko_api_key,
-            openai_api_key,
-            api_type,
-            api_base,
-            api_version,
-        ) = resolve_konko_credentials(
-            konko_api_key=konko_api_key,
-            openai_api_key=openai_api_key,
-            api_type=api_type,
-            api_base=api_base,
-            api_version=api_version,
-        )
-
         super().__init__(
             model=model,
             temperature=temperature,
@@ -110,11 +91,9 @@ class Konko(LLM):
             additional_kwargs=additional_kwargs,
             max_retries=max_retries,
             callback_manager=callback_manager,
-            konko_api_key=konko_api_key,
+            api_key=api_key,
             openai_api_key=openai_api_key,
             api_type=api_type,
-            api_version=api_version,
-            api_base=api_base,
             system_prompt=system_prompt,
             messages_to_prompt=messages_to_prompt,
             completion_to_prompt=completion_to_prompt,
@@ -135,7 +114,7 @@ class Konko(LLM):
         return LLMMetadata(
             context_window=konko_modelname_to_contextsize(self._get_model_name()),
             num_output=self.max_tokens,
-            is_chat_model=True,
+            is_chat_model=is_chat_model(self._get_model_name()),
             model_name=self.model,
         )
 
@@ -164,10 +143,8 @@ class Konko(LLM):
     @property
     def _credential_kwargs(self) -> Dict[str, Any]:
         return {
-            "konko_api_key": self.konko_api_key,
+            "api_key": self.api_key,
             "api_type": self.api_type,
-            "api_base": self.api_base,
-            "api_version": self.api_version,
             "openai_api_key": self.openai_api_key,
         }
 
@@ -202,7 +179,10 @@ class Konko(LLM):
             stream=False,
             **all_kwargs,
         )
-        message_dict = response["choices"][0]["message"]
+        if is_openai_v1():
+            message_dict = response.choices[0].message
+        else:
+            message_dict = response["choices"][0]["message"]
         message = from_openai_message_dict(message_dict)
 
         return ChatResponse(
@@ -222,7 +202,6 @@ class Konko(LLM):
 
         def gen() -> ChatResponseGen:
             content = ""
-            function_call: Optional[dict] = None
             for response in completion_with_retry(
                 is_chat_model=self._is_chat_model,
                 max_retries=self.max_retries,
@@ -230,44 +209,21 @@ class Konko(LLM):
                 stream=True,
                 **all_kwargs,
             ):
-                if len(response["choices"]) == 0 and response.get("prompt_annotations"):
-                    # When asking a stream response from the Azure OpenAI API
-                    # you first get an empty message with the content filtering
-                    # results. Ignore this message
+                if len(response.choices) == 0 and response.prompt_annotations:
                     continue
 
-                if len(response["choices"]) > 0:
-                    delta = response["choices"][0]["delta"]
+                if len(response.choices) > 0:
+                    delta = response.choices[0].delta
                 else:
                     delta = {}
-                role_value = delta.get("role")
+                role_value = delta.role
                 role = role_value if role_value is not None else "assistant"
-                content_delta = delta.get("content", "") or ""
+                content_delta = delta.content or ""
                 content += content_delta
-
-                function_call_delta = delta.get("function_call", None)
-                if function_call_delta is not None:
-                    if function_call is None:
-                        function_call = function_call_delta
-
-                        ## ensure we do not add a blank function call
-                        if function_call.get("function_name", "") is None:
-                            del function_call["function_name"]
-                    else:
-                        function_call["arguments"] = (
-                            function_call.get("arguments", "")
-                            + function_call_delta["arguments"]
-                        )
-
-                additional_kwargs = {}
-                if function_call is not None:
-                    additional_kwargs["function_call"] = function_call
-
                 yield ChatResponse(
                     message=ChatMessage(
                         role=role,
                         content=content,
-                        additional_kwargs=additional_kwargs,
                     ),
                     delta=content_delta,
                     raw=response,
@@ -325,7 +281,11 @@ class Konko(LLM):
             stream=False,
             **all_kwargs,
         )
-        text = response["choices"][0]["text"]
+        if is_openai_v1():
+            text = response.choices[0].text
+        else:
+            text = response["choices"][0]["text"]
+
         return CompletionResponse(
             text=text,
             raw=response,
@@ -351,8 +311,8 @@ class Konko(LLM):
                 stream=True,
                 **all_kwargs,
             ):
-                if len(response["choices"]) > 0:
-                    delta = response["choices"][0]["text"]
+                if len(response.choices) > 0:
+                    delta = response.choices[0].text
                 else:
                     delta = ""
                 text += delta
@@ -447,7 +407,10 @@ class Konko(LLM):
             stream=False,
             **all_kwargs,
         )
-        message_dict = response["choices"][0]["message"]
+        if is_openai_v1:  # type: ignore
+            message_dict = response.choices[0].message
+        else:
+            message_dict = response["choices"][0]["message"]
         message = from_openai_message_dict(message_dict)
 
         return ChatResponse(
@@ -475,34 +438,18 @@ class Konko(LLM):
                 stream=True,
                 **all_kwargs,
             ):
-                if len(response["choices"]) > 0:
-                    delta = response["choices"][0]["delta"]
+                if len(response.choices) > 0:
+                    delta = response.choices[0].delta
                 else:
                     delta = {}
-                role = delta.get("role", "assistant")
-                content_delta = delta.get("content", "") or ""
+                role = delta.role
+                content_delta = delta.content
                 content += content_delta
-
-                function_call_delta = delta.get("function_call", None)
-                if function_call_delta is not None:
-                    if function_call is None:
-                        function_call = function_call_delta
-
-                        ## ensure we do not add a blank function call
-                        if function_call.get("function_name", "") is None:
-                            del function_call["function_name"]
-                    else:
-                        function_call["arguments"] += function_call_delta["arguments"]
-
-                additional_kwargs = {}
-                if function_call is not None:
-                    additional_kwargs["function_call"] = function_call
 
                 yield ChatResponse(
                     message=ChatMessage(
                         role=role,
                         content=content,
-                        additional_kwargs=additional_kwargs,
                     ),
                     delta=content_delta,
                     raw=response,
@@ -528,7 +475,8 @@ class Konko(LLM):
             stream=False,
             **all_kwargs,
         )
-        text = response["choices"][0]["text"]
+        print(response)
+        text = response.choices[0].text
         return CompletionResponse(
             text=text,
             raw=response,
@@ -556,8 +504,8 @@ class Konko(LLM):
                 stream=True,
                 **all_kwargs,
             ):
-                if len(response["choices"]) > 0:
-                    delta = response["choices"][0]["text"]
+                if len(response.choices) > 0:
+                    delta = response.choices[0].text
                 else:
                     delta = ""
                 text += delta
