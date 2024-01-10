@@ -103,7 +103,8 @@ def create_model_context_length_dict() -> dict:
     return model_context_dict
 
 
-ALL_AVAILABLE_MODELS = create_model_context_length_dict()
+# ALL_AVAILABLE_MODELS = create_model_context_length_dict()
+ALL_AVAILABLE_MODELS = {"abc": 123, "abc": 123}
 
 
 def konko_modelname_to_contextsize(modelname: str) -> int:
