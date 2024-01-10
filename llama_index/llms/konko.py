@@ -1,6 +1,3 @@
-"""
-Konko integration with Llama_index.
-"""
 from typing import Any, Awaitable, Callable, Dict, Optional, Sequence
 
 from llama_index.bridge.pydantic import Field
@@ -33,73 +30,13 @@ from llama_index.llms.konko_utils import (
     from_openai_message_dict,
     is_chat_model,
     is_openai_v1,
+    resolve_konko_credentials,
     to_openai_message_dicts,
 )
 from llama_index.llms.llm import LLM
 from llama_index.types import BaseOutputParser, PydanticProgramMode
 
 DEFAULT_KONKO_MODEL = "meta-llama/llama-2-13b-chat"
-
-
-def create_model_context_length_dict() -> dict:
-    """
-    Create a dictionary mapping Konko model names to their max context length.
-
-    Returns:
-    - dict: A dictionary where keys are model names and values are their max context length.
-    """
-    try:
-        import konko
-
-    except ImportError:
-        raise ValueError(
-            "Could not import konko python package. "
-            "Please install it with `pip install konko`."
-        )
-    model_context_dict = {}
-
-    if is_openai_v1():
-        models = konko.models.list().data
-        for model in models:
-            model_name = model.name
-            max_context_length = model.max_context_length
-            model_context_dict[model_name] = max_context_length
-    else:
-        models = konko.Model.list().data
-        for model in models:
-            model_name = model["name"]
-            max_context_length = model["max_context_length"]
-            model_context_dict[model_name] = max_context_length
-
-    return model_context_dict
-
-
-ALL_AVAILABLE_MODELS = create_model_context_length_dict()
-
-
-def konko_modelname_to_contextsize(modelname: str) -> int:
-    """Calculate the maximum number of tokens possible to generate for a model.
-
-    Args:
-        modelname: The modelname we want to know the context size for.
-
-    Returns:
-        The maximum context size
-
-    Example:
-        .. code-block:: python
-
-            max_tokens = konko.modelname_to_contextsize(model_name)
-    """
-    context_size = ALL_AVAILABLE_MODELS.get(modelname, None)
-
-    if context_size is None:
-        raise ValueError(
-            f"Unknown model: {modelname}. Please provide a valid Konko model name."
-            "Known models are: " + ", ".join(ALL_AVAILABLE_MODELS.keys())
-        )
-
-    return context_size
 
 
 class Konko(LLM):
@@ -138,6 +75,8 @@ class Konko(LLM):
         konko_api_key: Optional[str] = None,
         openai_api_key: Optional[str] = None,
         api_type: Optional[str] = None,
+        api_base: Optional[str] = None,
+        api_version: Optional[str] = None,
         callback_manager: Optional[CallbackManager] = None,
         system_prompt: Optional[str] = None,
         messages_to_prompt: Optional[Callable[[Sequence[ChatMessage]], str]] = None,
@@ -147,6 +86,19 @@ class Konko(LLM):
         **kwargs: Any,
     ) -> None:
         additional_kwargs = additional_kwargs or {}
+        (
+            konko_api_key,
+            openai_api_key,
+            api_type,
+            api_base,
+            api_version,
+        ) = resolve_konko_credentials(
+            konko_api_key=konko_api_key,
+            openai_api_key=openai_api_key,
+            api_type=api_type,
+            api_base=api_base,
+            api_version=api_version,
+        )
         super().__init__(
             model=model,
             temperature=temperature,
@@ -157,6 +109,8 @@ class Konko(LLM):
             konko_api_key=konko_api_key,
             openai_api_key=openai_api_key,
             api_type=api_type,
+            api_version=api_version,
+            api_base=api_base,
             system_prompt=system_prompt,
             messages_to_prompt=messages_to_prompt,
             completion_to_prompt=completion_to_prompt,
@@ -172,10 +126,48 @@ class Konko(LLM):
     def class_name(cls) -> str:
         return "Konko_LLM"
 
+    def _create_model_context_length_dict(self) -> dict:
+        try:
+            import konko
+        except ImportError:
+            raise ValueError(
+                "Could not import konko python package. "
+                "Please install it with `pip install konko`."
+            )
+
+        model_context_dict = {}
+        if is_openai_v1():
+            models = konko.models.list().data
+            for model in models:
+                model_name = model.name
+                max_context_length = model.max_context_length
+                model_context_dict[model_name] = max_context_length
+        else:
+            models = konko.Model.list().data
+            for model in models:
+                model_name = model["name"]
+                max_context_length = model["max_context_length"]
+                model_context_dict[model_name] = max_context_length
+
+        return model_context_dict
+
+    # Calculate the maximum number of tokens possible for a model
+    def _konko_modelname_to_contextsize(self, modelname: str) -> int:
+        all_available_models = self._create_model_context_length_dict()
+        context_size = all_available_models.get(modelname, None)
+
+        if context_size is None:
+            raise ValueError(
+                f"Unknown model: {modelname}. Please provide a valid Konko model name."
+                "Known models are: " + ", ".join(all_available_models.keys())
+            )
+
+        return context_size
+
     @property
     def metadata(self) -> LLMMetadata:
         return LLMMetadata(
-            context_window=konko_modelname_to_contextsize(self._get_model_name()),
+            context_window=self._konko_modelname_to_contextsize(self._get_model_name()),
             num_output=self.max_tokens,
             is_chat_model=is_chat_model(self._get_model_name()),
             model_name=self.model,

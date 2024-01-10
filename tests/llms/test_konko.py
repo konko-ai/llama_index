@@ -8,12 +8,6 @@ except ImportError:
     konko = None  # type: ignore
 
 
-def setup_module() -> None:
-    import os
-
-    os.environ["KONKO_API_KEY"] = "ko-" + "a" * 48
-
-
 @pytest.mark.skipif(konko is None, reason="konko not installed")
 def test_chat_model_basic_non_openai_model() -> None:
     llm = Konko(model="meta-llama/llama-2-13b-chat")
