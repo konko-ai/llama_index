@@ -70,68 +70,6 @@ def completion_with_retry(is_chat_model: bool, max_retries: int, **kwargs: Any) 
     return _completion_with_retry(**kwargs)
 
 
-def create_model_context_length_dict() -> dict:
-    """
-    Create a dictionary mapping Konko model names to their max context length.
-
-    Returns:
-    - dict: A dictionary where keys are model names and values are their max context length.
-    """
-    try:
-        import konko
-
-    except ImportError:
-        raise ValueError(
-            "Could not import konko python package. "
-            "Please install it with `pip install konko`."
-        )
-    model_context_dict = {}
-
-    if is_openai_v1():
-        models = konko.models.list().data
-        for model in models:
-            model_name = model.name
-            max_context_length = model.max_context_length
-            model_context_dict[model_name] = max_context_length
-    else:
-        models = konko.Model.list().data
-        for model in models:
-            model_name = model["name"]
-            max_context_length = model["max_context_length"]
-            model_context_dict[model_name] = max_context_length
-
-    return model_context_dict
-
-
-# ALL_AVAILABLE_MODELS = create_model_context_length_dict()
-ALL_AVAILABLE_MODELS = {"abc": 123, "abc": 123}
-
-
-def konko_modelname_to_contextsize(modelname: str) -> int:
-    """Calculate the maximum number of tokens possible to generate for a model.
-
-    Args:
-        modelname: The modelname we want to know the context size for.
-
-    Returns:
-        The maximum context size
-
-    Example:
-        .. code-block:: python
-
-            max_tokens = konko.modelname_to_contextsize(model_name)
-    """
-    context_size = ALL_AVAILABLE_MODELS.get(modelname, None)
-
-    if context_size is None:
-        raise ValueError(
-            f"Unknown model: {modelname}. Please provide a valid Konko model name."
-            "Known models are: " + ", ".join(ALL_AVAILABLE_MODELS.keys())
-        )
-
-    return context_size
-
-
 def is_chat_model(model_id: str) -> bool:
     """
     Check if the specified model is a chat model.
