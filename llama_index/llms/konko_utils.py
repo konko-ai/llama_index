@@ -15,15 +15,6 @@ from tenacity import (
 from llama_index.bridge.pydantic import BaseModel
 from llama_index.llms.types import ChatMessage
 
-try:
-    import konko
-
-except ImportError:
-    raise ValueError(
-        "Could not import konko python package. "
-        "Please install it with `pip install konko`."
-    )
-
 DEFAULT_KONKO_API_TYPE = "open_ai"
 DEFAULT_KONKO_API_BASE = "https://api.konko.ai/v1"
 DEFAULT_KONKO_API_VERSION = ""
@@ -86,6 +77,14 @@ def create_model_context_length_dict() -> dict:
     Returns:
     - dict: A dictionary where keys are model names and values are their max context length.
     """
+    try:
+        import konko
+
+    except ImportError:
+        raise ValueError(
+            "Could not import konko python package. "
+            "Please install it with `pip install konko`."
+        )
     model_context_dict = {}
 
     if is_openai_v1():
@@ -145,6 +144,14 @@ def is_chat_model(model_id: str) -> bool:
     Raises:
     - ValueError: If the model_id is not found in the list of models.
     """
+    try:
+        import konko
+
+    except ImportError:
+        raise ValueError(
+            "Could not import konko python package. "
+            "Please install it with `pip install konko`."
+        )
     # Get the list of models based on the API version
     models = konko.models.list().data if is_openai_v1() else konko.Model.list().data
 
@@ -173,6 +180,14 @@ def get_completion_endpoint(is_chat_model: bool) -> Any:
     Raises:
     - NotImplementedError: If the combination of is_chat_model and API version is not supported.
     """
+    try:
+        import konko
+
+    except ImportError:
+        raise ValueError(
+            "Could not import konko python package. "
+            "Please install it with `pip install konko`."
+        )
     # For OpenAI version 1
     if is_openai_v1():
         return konko.chat.completions if is_chat_model else konko.completions
@@ -238,6 +253,14 @@ async def acompletion_with_retry(
     is_chat_model: bool, max_retries: int, **kwargs: Any
 ) -> Any:
     """Use tenacity to retry the async completion call."""
+    try:
+        import konko
+
+    except ImportError:
+        raise ValueError(
+            "Could not import konko python package. "
+            "Please install it with `pip install konko`."
+        )
     retry_decorator = _create_retry_decorator(max_retries=max_retries)
 
     @retry_decorator
