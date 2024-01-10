@@ -1,3 +1,6 @@
+"""
+Konko integration with Llama_index.
+"""
 from typing import Any, Awaitable, Callable, Dict, Optional, Sequence
 
 from llama_index.bridge.pydantic import Field
@@ -30,7 +33,7 @@ from llama_index.llms.konko_utils import (
     from_openai_message_dict,
     is_chat_model,
     is_openai_v1,
-    konko_modelname_to_contextsize,
+    # konko_modelname_to_contextsize,
     to_openai_message_dicts,
 )
 from llama_index.llms.llm import LLM
@@ -112,7 +115,7 @@ class Konko(LLM):
     @property
     def metadata(self) -> LLMMetadata:
         return LLMMetadata(
-            context_window=konko_modelname_to_contextsize(self._get_model_name()),
+            # context_window=konko_modelname_to_contextsize(self._get_model_name()),
             num_output=self.max_tokens,
             is_chat_model=is_chat_model(self._get_model_name()),
             model_name=self.model,

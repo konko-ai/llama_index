@@ -19,7 +19,10 @@ try:
     import konko
 
 except ImportError:
-    konko = None  # type: ignore
+    raise ValueError(
+        "Could not import konko python package. "
+        "Please install it with `pip install konko`."
+    )
 
 DEFAULT_KONKO_API_TYPE = "open_ai"
 DEFAULT_KONKO_API_BASE = "https://api.konko.ai/v1"
