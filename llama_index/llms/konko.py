@@ -29,7 +29,7 @@ from llama_index.llms.konko_utils import (
     acompletion_with_retry,
     completion_with_retry,
     from_openai_message_dict,
-    # import_konko,
+    import_konko,
     is_openai_v1,
     resolve_konko_credentials,
     to_openai_message_dicts,
@@ -138,8 +138,7 @@ class Konko(LLM):
         return "Konko_LLM"
 
     def _create_model_info_dict(self) -> dict:
-        # konko = import_konko()
-        import konko
+        konko = import_konko()
 
         models_info_dict = {}
         if is_openai_v1():
