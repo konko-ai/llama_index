@@ -1,5 +1,6 @@
 import logging
 from importlib.metadata import version
+from types import ModuleType
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type
 
 import openai
@@ -27,6 +28,18 @@ https://www.konko.ai/
 """
 
 logger = logging.getLogger(__name__)
+
+
+def import_konko() -> ModuleType:
+    try:
+        import konko
+
+        return konko
+    except ImportError:
+        raise ImportError(
+            "Could not import konko python package. "
+            "Please install it with `pip install konko`."
+        )
 
 
 def is_openai_v1() -> bool:
@@ -71,42 +84,6 @@ def completion_with_retry(is_chat_model: bool, max_retries: int, **kwargs: Any) 
     return _completion_with_retry(**kwargs)
 
 
-def is_chat_model(model_id: str) -> bool:
-    """
-    Check if the specified model is a chat model.
-
-    Args:
-    - model_id (str): The ID of the model to check.
-
-    Returns:
-    - bool: True if the model is a chat model, False otherwise.
-
-    Raises:
-    - ValueError: If the model_id is not found in the list of models.
-    """
-    try:
-        import konko
-
-    except ImportError:
-        raise ValueError(
-            "Could not import konko python package. "
-            "Please install it with `pip install konko`."
-        )
-    # Get the list of models based on the API version
-    models = konko.models.list().data if is_openai_v1() else konko.Model.list().data
-
-    # Use a generator expression to find the model by ID
-    model = next(
-        (m for m in models if (m.id if is_openai_v1() else m["id"]) == model_id), None
-    )
-
-    if model is None:
-        raise ValueError(f"Model with ID {model_id} not found.")
-
-    # Check if the model is a chat model
-    return model.is_chat if is_openai_v1() else model["is_chat"]
-
-
 def get_completion_endpoint(is_chat_model: bool) -> Any:
     """
     Get the appropriate completion endpoint based on the model type and API version.
@@ -120,14 +97,7 @@ def get_completion_endpoint(is_chat_model: bool) -> Any:
     Raises:
     - NotImplementedError: If the combination of is_chat_model and API version is not supported.
     """
-    try:
-        import konko
-
-    except ImportError:
-        raise ValueError(
-            "Could not import konko python package. "
-            "Please install it with `pip install konko`."
-        )
+    konko = import_konko()
     # For OpenAI version 1
     if is_openai_v1():
         return konko.chat.completions if is_chat_model else konko.completions
@@ -161,16 +131,24 @@ def to_openai_message_dicts(messages: Sequence[ChatMessage]) -> List[dict]:
 def from_openai_message_dict(message_dict: Any) -> ChatMessage:
     """Convert openai message dict to generic message."""
     if is_openai_v1():
+        # Handling for OpenAI version 1
         role = message_dict.role
         content = message_dict.content
+        additional_kwargs = {
+            attr: getattr(message_dict, attr)
+            for attr in dir(message_dict)
+            if not attr.startswith("_") and attr not in ["role", "content"]
+        }
     else:
-        role = message_dict["role"]
+        # Handling for OpenAI version 0
+        role = message_dict.get("role")
         content = message_dict.get("content", None)
-    additional_kwargs = {
-        attr: getattr(message_dict, attr)
-        for attr in dir(message_dict)
-        if not attr.startswith("_") and attr not in ["role", "content"]
-    }
+        additional_kwargs = {
+            key: value
+            for key, value in message_dict.items()
+            if key not in ["role", "content"]
+        }
+
     return ChatMessage(role=role, content=content, additional_kwargs=additional_kwargs)
 
 
@@ -204,8 +182,7 @@ def resolve_konko_credentials(
     3. konkoai module
     4. default
     """
-    import konko
-
+    konko = import_konko()
     # resolve from param or env
     konko_api_key = get_from_param_or_env(
         "konko_api_key", konko_api_key, "KONKO_API_KEY", ""
@@ -236,14 +213,7 @@ async def acompletion_with_retry(
     is_chat_model: bool, max_retries: int, **kwargs: Any
 ) -> Any:
     """Use tenacity to retry the async completion call."""
-    try:
-        import konko
-
-    except ImportError:
-        raise ValueError(
-            "Could not import konko python package. "
-            "Please install it with `pip install konko`."
-        )
+    konko = import_konko()
     retry_decorator = _create_retry_decorator(max_retries=max_retries)
 
     @retry_decorator

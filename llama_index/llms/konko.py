@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, Optional, Sequence
 
 from llama_index.bridge.pydantic import Field
@@ -28,7 +29,7 @@ from llama_index.llms.konko_utils import (
     acompletion_with_retry,
     completion_with_retry,
     from_openai_message_dict,
-    is_chat_model,
+    import_konko,
     is_openai_v1,
     resolve_konko_credentials,
     to_openai_message_dicts,
@@ -37,6 +38,13 @@ from llama_index.llms.llm import LLM
 from llama_index.types import BaseOutputParser, PydanticProgramMode
 
 DEFAULT_KONKO_MODEL = "meta-llama/llama-2-13b-chat"
+
+
+@dataclass
+class ModelInfo:
+    name: str
+    max_context_length: int
+    is_chat_model: bool
 
 
 class Konko(LLM):
@@ -64,6 +72,7 @@ class Konko(LLM):
     konko_api_key: str = Field(default=None, description="The konko API key.")
     openai_api_key: str = Field(default=None, description="The Openai API key.")
     api_type: str = Field(default=None, description="The konko API type.")
+    model_info_dict: Dict[str, ModelInfo]
 
     def __init__(
         self,
@@ -83,6 +92,7 @@ class Konko(LLM):
         completion_to_prompt: Optional[Callable[[str], str]] = None,
         pydantic_program_mode: PydanticProgramMode = PydanticProgramMode.DEFAULT,
         output_parser: Optional[BaseOutputParser] = None,
+        model_info_dict: Optional[Dict[str, ModelInfo]] = None,
         **kwargs: Any,
     ) -> None:
         additional_kwargs = additional_kwargs or {}
@@ -116,6 +126,7 @@ class Konko(LLM):
             completion_to_prompt=completion_to_prompt,
             pydantic_program_mode=pydantic_program_mode,
             output_parser=output_parser,
+            model_info_dict=self._create_model_info_dict(),
             **kwargs,
         )
 
@@ -126,56 +137,69 @@ class Konko(LLM):
     def class_name(cls) -> str:
         return "Konko_LLM"
 
-    def _create_model_context_length_dict(self) -> dict:
-        try:
-            import konko
-        except ImportError:
-            raise ValueError(
-                "Could not import konko python package. "
-                "Please install it with `pip install konko`."
-            )
-
-        model_context_dict = {}
+    def _create_model_info_dict(self) -> dict:
+        konko = import_konko()
+        models_info_dict = {}
         if is_openai_v1():
             models = konko.models.list().data
             for model in models:
-                model_name = model.name
-                max_context_length = model.max_context_length
-                model_context_dict[model_name] = max_context_length
+                model_info = ModelInfo(
+                    name=model.name,
+                    max_context_length=model.max_context_length,
+                    is_chat_model=model.is_chat,
+                )
+                models_info_dict[model.name] = model_info
         else:
             models = konko.Model.list().data
             for model in models:
-                model_name = model["name"]
-                max_context_length = model["max_context_length"]
-                model_context_dict[model_name] = max_context_length
+                model_info = ModelInfo(
+                    name=model["name"],
+                    max_context_length=model["max_context_length"],
+                    is_chat_model=model["is_chat"],
+                )
+                models_info_dict[model["name"]] = model_info
 
-        return model_context_dict
+        return models_info_dict
 
-    # Calculate the maximum number of tokens possible for a model
-    def _konko_modelname_to_contextsize(self, modelname: str) -> int:
-        all_available_models = self._create_model_context_length_dict()
-        context_size = all_available_models.get(modelname, None)
+    def _is_chat_model(self) -> bool:
+        """
+        Check if the specified model is a chat model.
 
-        if context_size is None:
+        Args:
+        - model_id (str): The ID of the model to check.
+
+        Returns:
+        - bool: True if the model is a chat model, False otherwise.
+
+        Raises:
+        - ValueError: If the model_id is not found in the list of models.
+        """
+        model_info = self.model_info_dict.get(self._get_model_name())
+        if model_info is None:
             raise ValueError(
-                f"Unknown model: {modelname}. Please provide a valid Konko model name."
-                "Known models are: " + ", ".join(all_available_models.keys())
+                f"Unknown model: {self._get_model_name()}. Please provide a valid Konko model name."
+                "Known models are: " + ", ".join(self.model_info_dict.keys())
             )
-
-        return context_size
+        return model_info.is_chat_model
 
     @property
     def metadata(self) -> LLMMetadata:
+        model_info = self.model_info_dict.get(self._get_model_name())
+        if model_info is None:
+            raise ValueError(
+                f"Unknown model: {self._get_model_name()}. Please provide a valid Konko model name."
+                "Known models are: " + ", ".join(self.model_info_dict.keys())
+            )
         return LLMMetadata(
-            context_window=self._konko_modelname_to_contextsize(self._get_model_name()),
+            context_window=model_info.max_context_length,
             num_output=self.max_tokens,
-            is_chat_model=is_chat_model(self._get_model_name()),
+            is_chat_model=model_info.is_chat_model,
             model_name=self.model,
         )
 
     @llm_chat_callback()
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
-        if self._is_chat_model:
+        if self._is_chat_model():
             chat_fn = self._chat
         else:
             chat_fn = completion_to_chat_decorator(self._complete)
@@ -185,15 +209,11 @@ class Konko(LLM):
     def stream_chat(
         self, messages: Sequence[ChatMessage], **kwargs: Any
     ) -> ChatResponseGen:
-        if self._is_chat_model:
+        if self._is_chat_model():
             stream_chat_fn = self._stream_chat
         else:
             stream_chat_fn = stream_completion_to_chat_decorator(self._stream_complete)
         return stream_chat_fn(messages, **kwargs)
-
-    @property
-    def _is_chat_model(self) -> bool:
-        return is_chat_model(self._get_model_name())
 
     @property
     def _credential_kwargs(self) -> Dict[str, Any]:
@@ -222,13 +242,13 @@ class Konko(LLM):
         }
 
     def _chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResponse:
-        if not self._is_chat_model:
+        if not self._is_chat_model():
             raise ValueError("This model is not a chat model.")
 
         message_dicts = to_openai_message_dicts(messages)
         all_kwargs = self._get_all_kwargs(**kwargs)
         response = completion_with_retry(
-            is_chat_model=self._is_chat_model,
+            is_chat_model=self._is_chat_model(),
             max_retries=self.max_retries,
             messages=message_dicts,
             stream=False,
@@ -249,7 +269,7 @@ class Konko(LLM):
     def _stream_chat(
         self, messages: Sequence[ChatMessage], **kwargs: Any
     ) -> ChatResponseGen:
-        if not self._is_chat_model:
+        if not self._is_chat_model():
             raise ValueError("This model is not a chat model.")
 
         message_dicts = to_openai_message_dicts(messages)
@@ -258,22 +278,28 @@ class Konko(LLM):
         def gen() -> ChatResponseGen:
             content = ""
             for response in completion_with_retry(
-                is_chat_model=self._is_chat_model,
+                is_chat_model=self._is_chat_model(),
                 max_retries=self.max_retries,
                 messages=message_dicts,
                 stream=True,
                 **all_kwargs,
             ):
-                if len(response.choices) == 0 and response.prompt_annotations:
-                    continue
-
-                if len(response.choices) > 0:
-                    delta = response.choices[0].delta
+                if is_openai_v1():
+                    if len(response.choices) == 0 and response.prompt_annotations:
+                        continue
+                    delta = (
+                        response.choices[0].delta if len(response.choices) > 0 else {}
+                    )
+                    role_value = delta.role
+                    content_delta = delta.content or ""
                 else:
-                    delta = {}
-                role_value = delta.role
+                    if "choices" not in response or len(response["choices"]) == 0:
+                        continue
+                    delta = response["choices"][0].get("delta", {})
+                    role_value = delta["role"]
+                    content_delta = delta["content"] or ""
+
                 role = role_value if role_value is not None else "assistant"
-                content_delta = delta.content or ""
                 content += content_delta
                 yield ChatResponse(
                     message=ChatMessage(
@@ -291,7 +317,7 @@ class Konko(LLM):
     def complete(
         self, prompt: str, formatted: bool = False, **kwargs: Any
     ) -> CompletionResponse:
-        if self._is_chat_model:
+        if self._is_chat_model():
             complete_fn = chat_to_completion_decorator(self._chat)
         else:
             complete_fn = self._complete
@@ -301,7 +327,7 @@ class Konko(LLM):
     def stream_complete(
         self, prompt: str, formatted: bool = False, **kwargs: Any
     ) -> CompletionResponseGen:
-        if self._is_chat_model:
+        if self._is_chat_model():
             stream_complete_fn = stream_chat_to_completion_decorator(self._stream_chat)
         else:
             stream_complete_fn = self._stream_complete
@@ -324,7 +350,7 @@ class Konko(LLM):
         }
 
     def _complete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
-        if self._is_chat_model:
+        if self._is_chat_model():
             raise ValueError("This model is a chat model.")
 
         all_kwargs = self._get_all_kwargs(**kwargs)
@@ -334,7 +360,7 @@ class Konko(LLM):
             all_kwargs["max_tokens"] = max_tokens
 
         response = completion_with_retry(
-            is_chat_model=self._is_chat_model,
+            is_chat_model=self._is_chat_model(),
             max_retries=self.max_retries,
             prompt=prompt,
             stream=False,
@@ -352,7 +378,7 @@ class Konko(LLM):
         )
 
     def _stream_complete(self, prompt: str, **kwargs: Any) -> CompletionResponseGen:
-        if self._is_chat_model:
+        if self._is_chat_model():
             raise ValueError("This model is a chat model.")
 
         all_kwargs = self._get_all_kwargs(**kwargs)
@@ -364,16 +390,22 @@ class Konko(LLM):
         def gen() -> CompletionResponseGen:
             text = ""
             for response in completion_with_retry(
-                is_chat_model=self._is_chat_model,
+                is_chat_model=self._is_chat_model(),
                 max_retries=self.max_retries,
                 prompt=prompt,
                 stream=True,
                 **all_kwargs,
             ):
-                if len(response.choices) > 0:
-                    delta = response.choices[0].text
+                if is_openai_v1():
+                    if len(response.choices) > 0:
+                        delta = response.choices[0].text
+                    else:
+                        delta = ""
                 else:
-                    delta = ""
+                    if len(response["choices"]) > 0:
+                        delta = response["choices"][0].text
+                    else:
+                        delta = ""
                 text += delta
                 yield CompletionResponse(
                     delta=delta,
@@ -410,7 +442,7 @@ class Konko(LLM):
         **kwargs: Any,
     ) -> ChatResponse:
         achat_fn: Callable[..., Awaitable[ChatResponse]]
-        if self._is_chat_model:
+        if self._is_chat_model():
             achat_fn = self._achat
         else:
             achat_fn = acompletion_to_chat_decorator(self._acomplete)
@@ -423,7 +455,7 @@ class Konko(LLM):
         **kwargs: Any,
     ) -> ChatResponseAsyncGen:
         astream_chat_fn: Callable[..., Awaitable[ChatResponseAsyncGen]]
-        if self._is_chat_model:
+        if self._is_chat_model():
             astream_chat_fn = self._astream_chat
         else:
             astream_chat_fn = astream_completion_to_chat_decorator(
@@ -435,7 +467,7 @@ class Konko(LLM):
     async def acomplete(
         self, prompt: str, formatted: bool = False, **kwargs: Any
     ) -> CompletionResponse:
-        if self._is_chat_model:
+        if self._is_chat_model():
             acomplete_fn = achat_to_completion_decorator(self._achat)
         else:
             acomplete_fn = self._acomplete
@@ -445,7 +477,7 @@ class Konko(LLM):
     async def astream_complete(
         self, prompt: str, formatted: bool = False, **kwargs: Any
     ) -> CompletionResponseAsyncGen:
-        if self._is_chat_model:
+        if self._is_chat_model():
             astream_complete_fn = astream_chat_to_completion_decorator(
                 self._astream_chat
             )
@@ -456,13 +488,13 @@ class Konko(LLM):
     async def _achat(
         self, messages: Sequence[ChatMessage], **kwargs: Any
     ) -> ChatResponse:
-        if not self._is_chat_model:
+        if not self._is_chat_model():
             raise ValueError("This model is not a chat model.")
 
         message_dicts = to_openai_message_dicts(messages)
         all_kwargs = self._get_all_kwargs(**kwargs)
         response = await acompletion_with_retry(
-            is_chat_model=self._is_chat_model,
+            is_chat_model=self._is_chat_model(),
             max_retries=self.max_retries,
             messages=message_dicts,
             stream=False,
@@ -483,7 +515,7 @@ class Konko(LLM):
     async def _astream_chat(
         self, messages: Sequence[ChatMessage], **kwargs: Any
     ) -> ChatResponseAsyncGen:
-        if not self._is_chat_model:
+        if not self._is_chat_model():
             raise ValueError("This model is not a chat model.")
 
         message_dicts = to_openai_message_dicts(messages)
@@ -493,18 +525,26 @@ class Konko(LLM):
             content = ""
             function_call: Optional[dict] = None
             async for response in await acompletion_with_retry(
-                is_chat_model=self._is_chat_model,
+                is_chat_model=self._is_chat_model(),
                 max_retries=self.max_retries,
                 messages=message_dicts,
                 stream=True,
                 **all_kwargs,
             ):
-                if len(response.choices) > 0:
-                    delta = response.choices[0].delta
+                if is_openai_v1():
+                    if len(response.choices) > 0:
+                        delta = response.choices[0].delta
+                    else:
+                        delta = {}
+                    role = delta.role
+                    content_delta = delta.content
                 else:
-                    delta = {}
-                role = delta.role
-                content_delta = delta.content
+                    if len(response["choices"]) > 0:
+                        delta = response["choices"][0].delta
+                    else:
+                        delta = {}
+                    role = delta["role"]
+                    content_delta = delta["content"]
                 content += content_delta
 
                 yield ChatResponse(
@@ -520,7 +560,7 @@ class Konko(LLM):
         return gen()
 
     async def _acomplete(self, prompt: str, **kwargs: Any) -> CompletionResponse:
-        if self._is_chat_model:
+        if self._is_chat_model():
             raise ValueError("This model is a chat model.")
 
         all_kwargs = self._get_all_kwargs(**kwargs)
@@ -530,14 +570,16 @@ class Konko(LLM):
             all_kwargs["max_tokens"] = max_tokens
 
         response = await acompletion_with_retry(
-            is_chat_model=self._is_chat_model,
+            is_chat_model=self._is_chat_model(),
             max_retries=self.max_retries,
             prompt=prompt,
             stream=False,
             **all_kwargs,
         )
-        print(response)
-        text = response.choices[0].text
+        if is_openai_v1():
+            text = response.choices[0].text
+        else:
+            text = response["choices"][0]["text"]
         return CompletionResponse(
             text=text,
             raw=response,
@@ -547,7 +589,7 @@ class Konko(LLM):
     async def _astream_complete(
         self, prompt: str, **kwargs: Any
     ) -> CompletionResponseAsyncGen:
-        if self._is_chat_model:
+        if self._is_chat_model():
             raise ValueError("This model is a chat model.")
 
         all_kwargs = self._get_all_kwargs(**kwargs)
@@ -559,16 +601,22 @@ class Konko(LLM):
         async def gen() -> CompletionResponseAsyncGen:
             text = ""
             async for response in await acompletion_with_retry(
-                is_chat_model=self._is_chat_model,
+                is_chat_model=self._is_chat_model(),
                 max_retries=self.max_retries,
                 prompt=prompt,
                 stream=True,
                 **all_kwargs,
             ):
-                if len(response.choices) > 0:
-                    delta = response.choices[0].text
+                if is_openai_v1():
+                    if len(response.choices) > 0:
+                        delta = response.choices[0].text
+                    else:
+                        delta = ""
                 else:
-                    delta = ""
+                    if len(response["choices"]) > 0:
+                        delta = response["choices"][0].text
+                    else:
+                        delta = ""
                 text += delta
                 yield CompletionResponse(
                     delta=delta,
