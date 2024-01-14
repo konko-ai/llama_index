@@ -137,7 +137,7 @@ class Konko(LLM):
     def class_name(cls) -> str:
         return "Konko_LLM"
 
-    def _create_model_info_dict(self) -> dict:
+    def _create_model_info_dict(self) -> Dict[str, ModelInfo]:
         konko = import_konko()
 
         models_info_dict = {}
