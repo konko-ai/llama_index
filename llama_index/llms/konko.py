@@ -162,6 +162,16 @@ class Konko(LLM):
 
         return models_info_dict
 
+    def _get_model_info(self) -> ModelInfo:
+        model_name = self._get_model_name()
+        model_info = self.model_info_dict.get(model_name)
+        if model_info is None:
+            raise ValueError(
+                f"Unknown model: {model_name}. Please provide a valid Konko model name. "
+                "Known models are: " + ", ".join(self.model_info_dict.keys())
+            )
+        return model_info
+
     def _is_chat_model(self) -> bool:
         """
         Check if the specified model is a chat model.
@@ -175,22 +185,12 @@ class Konko(LLM):
         Raises:
         - ValueError: If the model_id is not found in the list of models.
         """
-        model_info = self.model_info_dict.get(self._get_model_name())
-        if model_info is None:
-            raise ValueError(
-                f"Unknown model: {self._get_model_name()}. Please provide a valid Konko model name."
-                "Known models are: " + ", ".join(self.model_info_dict.keys())
-            )
+        model_info = self._get_model_info()
         return model_info.is_chat_model
 
     @property
     def metadata(self) -> LLMMetadata:
-        model_info = self.model_info_dict.get(self._get_model_name())
-        if model_info is None:
-            raise ValueError(
-                f"Unknown model: {self._get_model_name()}. Please provide a valid Konko model name."
-                "Known models are: " + ", ".join(self.model_info_dict.keys())
-            )
+        model_info = self._get_model_info()
         return LLMMetadata(
             context_window=model_info.max_context_length,
             num_output=self.max_tokens,
